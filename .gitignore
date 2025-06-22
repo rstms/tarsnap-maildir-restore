@@ -1,0 +1,6 @@
+tarsnap-maildir-restore
+notes
+cruft
+*.core
+*.log
+*postactivate
