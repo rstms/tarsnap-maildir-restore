@@ -4,3 +4,5 @@ cruft
 *.core
 *.log
 *postactivate
+cmd/testdata/file_list
+cmd/testdata/dir_list

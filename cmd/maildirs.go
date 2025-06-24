@@ -34,22 +34,27 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+var maildirsCmd = &cobra.Command{
+	Use:   "maildirs [ARCHIVE_NAME]",
+	Short: "List all maildirs in archive",
+	Long: `
+Write list of maildirs to stdout
+`,
+	Args: cobra.RangeArgs(0, 1),
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(rootCmd.Name() + " version " + rootCmd.Version)
+		archiveName := viper.GetString("archive_name")
+		if len(args) > 0 {
+			archiveName = args[0]
+		}
+		tarsnap, err := NewTarsnap(archiveName)
+		cobra.CheckErr(err)
+		fmt.Println(FormatJSON(&tarsnap.Users))
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(maildirsCmd)
 }

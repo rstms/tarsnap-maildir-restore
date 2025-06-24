@@ -1,1 +1,7 @@
 verbose: true
+debug: true
+archive_name: maildir.home.2025-06-23
+dest_dir: ~/go/src/github.com/rstms/tarsnap-maildir-restore/cmd/testdata/out
+dir_list: ~/go/src/github.com/rstms/tarsnap-maildir-restore/cmd/testdata/dir_list
+file_list: ~/go/src/github.com/rstms/tarsnap-maildir-restore/cmd/testdata/file_list
+

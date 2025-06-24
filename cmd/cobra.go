@@ -106,7 +106,7 @@ func ExpandPath(pathname string) string {
 }
 
 func InitConfig() {
-	viper.SetEnvPrefix(strings.ToLower(rootCmd.Name()))
+	viper.SetEnvPrefix("tarsnap")
 	viper.AutomaticEnv()
 	filename := viper.GetString("config")
 	if filename != "" {
