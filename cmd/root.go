@@ -39,7 +39,7 @@ import (
 var cfgFile string
 
 var rootCmd = &cobra.Command{
-	Version: "0.0.7",
+	Version: "0.0.8",
 	Use:     "tarsnap-maildir-restore",
 	Short:   "restore tarsnap maildir backup",
 	Long: `
