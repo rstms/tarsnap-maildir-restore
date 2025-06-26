@@ -48,10 +48,10 @@ Output a list of archives associated with a tarsnap key
 	Run: func(cmd *cobra.Command, args []string) {
 		p := NewTarsnapProcess([]string{"--list-archives", "--keyfile", ExpandPath(viper.GetString("keyfile"))})
 		stdout, stderr, err := p.Run()
-		cobra.CheckErr(err)
 		if stderr != "" {
 			fmt.Fprintf(os.Stderr, "%s\n", stderr)
 		}
+		cobra.CheckErr(err)
 		archives := []string{}
 		for _, line := range strings.Split(stdout, "\n") {
 			line = strings.TrimSpace(line)
