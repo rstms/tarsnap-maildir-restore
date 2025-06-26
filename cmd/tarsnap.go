@@ -32,6 +32,7 @@ POSSIBILITY OF SUCH DAMAGE.
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
@@ -43,379 +44,355 @@ import (
 	"github.com/spf13/viper"
 )
 
+const CMD_LENGTH_BUFFER = 2048
+const CMD_LENGTH_MIN = 8192
+const CMD_LENGTH_LIMIT = 32767
+
+var LIST_FILENAME_PATTERN = regexp.MustCompile(`^\d{4}(?:-\d{2}){2}\.[^.]+\.([^.]+)\.file_list$`)
+var FILE_LIST_PATTERN = regexp.MustCompile(`^(?:\S+\s+){4}(\d+)\s+[^.]+(\..+)$`)
 var USER_PATTERN = regexp.MustCompile(`^\./([^/]+)/Maildir/.*`)
-var CUR_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/cur$`)
-
-var CUR_NEW_TMP_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/(cur|new|tmp)$`)
-
-var DIR_PATTERN = regexp.MustCompile(`^.*/$`)
-
-var INBOX_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir/[^.][^/]+/.*$`)
-
 var MAILDIR_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir/([^/]+).*$`)
-var ROOTFILE_PATTERN = regexp.MustCompile(`^(./[^/]*/Maildir/[^.][^/]*)$`)
-var ROOTDIR_PATTERN = regexp.MustCompile(`^(./[^/]*/Maildir/[^.][^/]*/).*$`)
-var NEW_TMP_PATTERN = regexp.MustCompile(`^.*/(new|tmp)/$`)
-var DIR_MAP_PATTERN = regexp.MustCompile(`^(\d+)\s+(\S+).*$`)
-var MAILDIR_LIST_PATTERN = regexp.MustCompile(`^\./([^/]+)/Maildir/\.([^/]+)/cur$`)
 
-var CUR_MESSAGE_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/cur/[^/]+$`)
-var NEW_MESSAGE_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/new/.+$`)
-var TMP_MESSAGE_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/tmp/.+$`)
+//var CUR_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/cur$`)
+//var CUR_NEW_TMP_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/(cur|new|tmp)$`)
+//var DIR_PATTERN = regexp.MustCompile(`^.*/$`)
+//var INBOX_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir/[^.][^/]+/.*$`)
+//var ROOTFILE_PATTERN = regexp.MustCompile(`^(./[^/]*/Maildir/[^.][^/]*)$`)
+//var ROOTDIR_PATTERN = regexp.MustCompile(`^(./[^/]*/Maildir/[^.][^/]*/).*$`)
+//var NEW_TMP_PATTERN = regexp.MustCompile(`^.*/(new|tmp)/$`)
+//var DIR_MAP_PATTERN = regexp.MustCompile(`^(\d+)\s+(\S+).*$`)
+//var MAILDIR_LIST_PATTERN = regexp.MustCompile(`^\./([^/]+)/Maildir/\.([^/]+)/cur$`)
+//var CUR_MESSAGE_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/cur/[^/]+$`)
+//var NEW_MESSAGE_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/new/.+$`)
+//var TMP_MESSAGE_PATTERN = regexp.MustCompile(`^\./[^/]+/Maildir(/[^/]+){0,1}/tmp/.+$`)
+
+type MaildirFile struct {
+	Name string
+	Size int64
+}
 
 type Maildir struct {
-	Name     string
-	Patterns []string
-	Files    []string
-	Blocks   int
-	ScanPath string
+	Files []MaildirFile
 }
 
-func NewMaildir(user, name string, blocks int) *Maildir {
-
-	m := Maildir{
-		Name:     name,
-		Patterns: []string{},
-		Files:    []string{},
-		Blocks:   blocks,
-	}
-	if name == "INBOX" {
-		for _, dir := range []string{"cur", "tmp", "new"} {
-			m.Patterns = append(m.Patterns, "./"+filepath.Join(user, "Maildir", dir, "*"))
-		}
-		m.ScanPath = filepath.Join(user, "Maildir", "cur")
-	} else {
-		m.Patterns = append(m.Patterns, "./"+filepath.Join(user, "Maildir", name, "*"))
-		m.ScanPath = filepath.Join(user, "Maildir", name, "cur")
-	}
-	return &m
-}
-
-func (m *Maildir) AddFile(file string) {
-	m.Files = append(m.Files, file)
-}
-
-func (m *Maildir) AddPattern(file string) {
-	m.Patterns = append(m.Patterns, file)
+func (m *Maildir) AddFile(file string, size int64) {
+	m.Files = append(m.Files, MaildirFile{Name: file, Size: size})
 }
 
 type User struct {
-	Name     string
 	Maildirs map[string]*Maildir
 }
 
-func NewUser(name string) *User {
-	u := User{
-		Name:     name,
-		Maildirs: make(map[string]*Maildir),
+func (u *User) getMaildir(name string) *Maildir {
+	_, ok := u.Maildirs[name]
+	if !ok {
+		u.Maildirs[name] = &Maildir{
+			Files: []MaildirFile{},
+		}
 	}
-	return &u
+	return u.Maildirs[name]
 }
 
 type Tarsnap struct {
 	Archive       string
-	Files         []string
-	Dirs          map[string]int
 	Users         map[string]*User
+	lengthLimit   int
+	userFilter    *regexp.Regexp
+	maildirFilter *regexp.Regexp
+	destDir       string
+	skipLogged    map[string]bool
 	debug         bool
 	verbose       bool
 	json          bool
 	dryrun        bool
-	userFilter    *regexp.Regexp
-	maildirFilter *regexp.Regexp
-	destDir       string
 }
 
-func NewTarsnap(archiveName string) (*Tarsnap, error) {
+func NewTarsnap(name string) (*Tarsnap, error) {
+	viper.SetDefault("tarsnap_command", "tarsnap")
 	viper.SetDefault("user", ".*")
 	userFilter, err := regexp.Compile(viper.GetString("user"))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed user filter regexp compile: %v", err)
 	}
 	viper.SetDefault("maildir", ".*")
 	maildirFilter, err := regexp.Compile(viper.GetString("maildir"))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed maildir filter regexp compile: %v", err)
 	}
 
 	t := Tarsnap{
-		Archive:       archiveName,
-		Files:         []string{},
-		Dirs:          make(map[string]int),
+		Archive:       name,
 		Users:         make(map[string]*User),
+		lengthLimit:   CMD_LENGTH_LIMIT,
+		userFilter:    userFilter,
+		maildirFilter: maildirFilter,
+		destDir:       ExpandPath(viper.GetString("output_dir")),
+		skipLogged:    make(map[string]bool),
 		debug:         viper.GetBool("debug"),
 		verbose:       viper.GetBool("verbose"),
 		json:          viper.GetBool("json"),
 		dryrun:        viper.GetBool("dryrun"),
-		userFilter:    userFilter,
-		maildirFilter: maildirFilter,
-		destDir:       viper.GetString("dest_dir"),
 	}
+
+	/*
+		err = t.setLengthLimit()
+		if err != nil {
+			return nil, err
+		}
+	*/
+
 	err = t.initialize()
 	if err != nil {
 		return nil, err
 	}
+
 	return &t, nil
 }
 
-func (t *Tarsnap) mapFiles() error {
+func (t *Tarsnap) setLengthLimit() error {
 
-	for _, line := range t.Files {
-		err := t.parseFileLine(line)
-		if err != nil {
-			return err
-		}
+	envSize := 0
+	environ := os.Environ()
+	for _, name := range environ {
+		value := os.Getenv(name)
+		envSize += len(name) + len(value) + 2
 	}
+
+	proc := NewProcess("getconf", []string{"ARG_MAX"})
+	stdout, _, err := proc.Run()
+	if err != nil {
+		return fmt.Errorf("failed reading ARG_MAX: %v", err)
+	}
+	argMax, err := strconv.Atoi(strings.TrimSpace(stdout))
+	if err != nil {
+		return fmt.Errorf("failed parsing getconf output: %v", err)
+	}
+
+	t.lengthLimit = argMax - (envSize + CMD_LENGTH_BUFFER)
+
+	if t.lengthLimit < CMD_LENGTH_MIN {
+		return fmt.Errorf("command length below limit: %d", t.lengthLimit)
+	}
+
+	panic(fmt.Sprintf("lengthLimit: %d", t.lengthLimit))
+
 	return nil
+}
+
+func (t *Tarsnap) getUser(name string) *User {
+	_, ok := t.Users[name]
+	if !ok {
+		t.Users[name] = &User{Maildirs: make(map[string]*Maildir)}
+	}
+	return t.Users[name]
 }
 
 func (t *Tarsnap) Restore() error {
 
 	restores := NewProcessSet()
-
-	for username, user := range t.Users {
-		if t.verbose {
-			log.Printf("%s\n", username)
-		}
-		for _, maildir := range user.Maildirs {
-			if t.verbose {
-				for _, pattern := range maildir.Patterns {
-					log.Printf("\t%s\n", pattern)
+	files := []string{}
+	var cmdLength int
+	var size int64
+	for userName, user := range t.Users {
+		for maildirName, maildir := range user.Maildirs {
+			archiveName := fmt.Sprintf("%s.%s.maildir", t.Archive, userName)
+			for _, file := range maildir.Files {
+				if cmdLength+len(file.Name) > t.lengthLimit {
+					err := restores.AddRestore(archiveName, userName, maildirName, files, size)
+					if err != nil {
+						return err
+					}
+					size = 0
+					cmdLength = 0
+					files = []string{}
+				} else {
+					files = append(files, file.Name)
+					cmdLength += len(file.Name)
+					size += file.Size
 				}
 			}
-			err := restores.AddRestore(t.Archive, maildir.Patterns)
-			if err != nil {
-				return err
+			if len(files) > 0 {
+				err := restores.AddRestore(archiveName, userName, maildirName, files, size)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
 
-	if !t.dryrun {
-		err := restores.Wait()
-		if err != nil {
-			return err
-		}
+	if t.dryrun {
+		return nil
 	}
+
+	err := restores.Run()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (t *Tarsnap) parseFileLine(line string) error {
+func (t *Tarsnap) parseFile(userName, sizeStr, filename string) error {
 
-	if line == "" || line == "." || line == "./file_list" || line == "./dir_list" {
-		return nil
+	size, err := strconv.ParseInt(sizeStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed converting file size: %v", err)
 	}
 
-	if CUR_NEW_TMP_PATTERN.MatchString(line) {
-		// TODO: be sure these dirs are present in a pattern of one of the maildirs
-		return nil
+	match := USER_PATTERN.FindStringSubmatch(filename)
+	if len(match) != 2 {
+		return fmt.Errorf("failed parsing username from: %s", filename)
+	}
+	if userName != match[1] {
+		return fmt.Errorf("unexpected username '%s' in %s", match[1], filename)
 	}
 
-	username := ""
-	match := USER_PATTERN.FindStringSubmatch(line)
+	user := t.getUser(userName)
+
+	maildirName := ""
+	match = MAILDIR_PATTERN.FindStringSubmatch(filename)
+
+	if t.debug {
+		log.Printf("\nLINE: %s\n", filename)
+		log.Printf("MAILDIR_PATTERN: %d %v\n", len(match), match)
+	}
+
 	if len(match) == 2 {
-		username = match[1]
-	} else {
-		return nil
+		maildirName = match[1]
 	}
-
-	if !t.userFilter.MatchString(username) {
-		return nil
-	}
-
-	maildir := ""
-	match = MAILDIR_PATTERN.FindStringSubmatch(line)
-	if len(match) == 2 {
-		maildir = match[1]
-	}
-	if maildir == "" {
-		log.Fatalf("no maildir: %s\n", line)
-	}
-
-	if !strings.HasPrefix(maildir, ".") {
-		maildir = "INBOX"
-	}
-
-	if !t.maildirFilter.MatchString(maildir) {
-		return nil
-	}
-
-	if CUR_MESSAGE_PATTERN.MatchString(line) {
-		if t.debug {
-			t.Users[username].Maildirs[maildir].AddFile(line)
-		}
-		return nil
-	}
-	if TMP_MESSAGE_PATTERN.MatchString(line) {
-		if t.debug {
-			log.Printf("TMP: %s %s %s\n", username, maildir, line)
-		}
-		return nil
-	}
-	if NEW_MESSAGE_PATTERN.MatchString(line) {
-		if t.debug {
-			log.Printf("NEW: %s %s %s\n", username, maildir, line)
-		}
-		return nil
-	}
-
-	if maildir == "INBOX" {
-		t.Users[username].Maildirs[maildir].AddPattern(line)
-		return nil
+	if maildirName == "" || !strings.HasPrefix(maildirName, ".") {
+		maildirName = "INBOX"
 	}
 
 	if t.debug {
-		fmt.Printf("OTHER: %s %s %s\n", username, maildir, line)
+		log.Printf("MAILDIR: %s\n", maildirName)
 	}
+
+	if !t.maildirFilter.MatchString(maildirName) {
+		if t.verbose {
+			_, ok := t.skipLogged[maildirName]
+			if !ok {
+				log.Printf("skipping filtered maildirName: %s\n", maildirName)
+				t.skipLogged[maildirName] = true
+			}
+		}
+		return nil
+	}
+
+	maildir := user.getMaildir(maildirName)
+
+	if t.debug {
+		log.Printf("add %s %s %s\n", userName, maildirName, filename)
+	}
+
+	maildir.AddFile(filename, size)
 
 	return nil
 }
 
 func (t *Tarsnap) initialize() error {
 
-	fileListFile := viper.GetString("file_list")
-	if t.verbose && fileListFile != "" {
-		log.Printf("using local file_list: %s", fileListFile)
+	metadataDir := ExpandPath(viper.GetString("metadata_dir"))
+
+	if t.verbose && metadataDir != "" {
+		log.Printf("using preloaded metadata in: %s", metadataDir)
 	}
 
-	dirListFile := viper.GetString("dir_list")
-	if t.verbose && dirListFile != "" {
-		log.Printf("using local dir_list: %s", dirListFile)
-	}
-
-	if fileListFile == "" || dirListFile == "" {
-		destDir, err := os.MkdirTemp("", "restore.*")
+	if metadataDir == "" {
+		dir, err := os.MkdirTemp("", "tarsnap.metadata.*")
 		if err != nil {
 			return err
 		}
-		defer os.RemoveAll(destDir)
+		metadataDir = dir
+		//defer os.RemoveAll(metadataDir)
+		metadataArchive := fmt.Sprintf("%s.metadata", t.Archive)
 		args := []string{
 			"-x",
-			"--keyfile", viper.GetString("keyfile"),
-			"-f", t.Archive,
-			"--fast-read",
-			"-C", destDir,
+			"--keyfile", ExpandPath(viper.GetString("keyfile")),
+			"-f", metadataArchive,
+			"-C", metadataDir,
 		}
-		if fileListFile == "" {
-			args = append(args, "./file_list")
-			fileListFile = filepath.Join(destDir, "file_list")
+		if t.verbose {
+			log.Printf("extracting metadata: %s\n", metadataArchive)
 		}
-		if dirListFile == "" {
-			args = append(args, "./dir_list")
-			dirListFile = filepath.Join(destDir, "dir_list")
-		}
-		log.Println("extracting metadadata")
-
 		p := NewTarsnapProcess(args)
 		_, _, err = p.Run()
 		if err != nil {
 			return fmt.Errorf("metadata extract failed: %v", err)
 		}
 	}
-
-	err := t.readFiles(fileListFile)
+	if t.verbose {
+		log.Printf("reading metadata dir: %s\n", metadataDir)
+	}
+	entries, err := os.ReadDir(metadataDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed reading metadata files: %v", err)
 	}
-
-	err = t.readDirs(dirListFile)
-	if err != nil {
-		return err
-	}
-
-	err = t.mapMaildirs()
-	if err != nil {
-		return err
-	}
-
-	err = t.mapFiles()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (t *Tarsnap) readFiles(filename string) error {
-	t.Files = []string{}
-	data, err := os.ReadFile(ExpandPath(filename))
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			t.Files = append(t.Files, line)
-		}
-	}
-	return nil
-}
-
-func (t *Tarsnap) readDirs(filename string) error {
-	data, err := os.ReadFile(ExpandPath(filename))
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		match := DIR_MAP_PATTERN.FindStringSubmatch(line)
-		if len(match) == 3 {
-			size, err := strconv.Atoi(match[1])
+	for _, entry := range entries {
+		if entry.Type().IsRegular() {
+			if t.verbose {
+				log.Printf("reading metadata file: %s\n", entry.Name())
+			}
+			err := t.readFileList(filepath.Join(metadataDir, entry.Name()))
 			if err != nil {
 				return err
 			}
-			t.Dirs[match[2]] = size
 		}
 	}
 	return nil
 }
 
-func (t *Tarsnap) mapMaildirs() error {
-	for _, line := range t.Files {
-		if CUR_PATTERN.MatchString(line) {
-			match := USER_PATTERN.FindStringSubmatch(line)
-			if len(match) != 2 {
-				log.Fatalf("no user in '%s'", line)
-			}
-			user := match[1]
+func (t *Tarsnap) readFileList(pathname string) error {
 
-			if !t.userFilter.MatchString(user) {
-				continue
-			}
+	_, filename := filepath.Split(pathname)
 
-			_, ok := t.Users[user]
-			if !ok {
-				t.Users[user] = NewUser(user)
-			}
+	if t.verbose {
+		log.Printf("reading %s\n", filename)
+	}
 
-			var maildir string
-			match = MAILDIR_PATTERN.FindStringSubmatch(line)
-			if len(match) == 2 {
-				maildir = match[1]
-			}
-			if maildir == "cur" {
-				maildir = "INBOX"
-			}
+	match := LIST_FILENAME_PATTERN.FindStringSubmatch(filename)
+	if len(match) != 2 {
+		return fmt.Errorf("file_list filename parse failed: %d %v", len(match), match)
+	}
+	userName := match[1]
 
-			if !t.maildirFilter.MatchString(maildir) {
-				continue
-			}
+	if !t.userFilter.MatchString(userName) {
+		if t.verbose {
+			log.Printf("skipping filtered username: %s\n", userName)
+		}
+		return nil
+	}
 
-			blocks := t.Dirs[line]
-
-			_, ok = t.Users[user].Maildirs[maildir]
-			if !ok {
-				t.Users[user].Maildirs[maildir] = NewMaildir(user, maildir, blocks)
-			}
+	file, err := os.Open(pathname)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		match := FILE_LIST_PATTERN.FindStringSubmatch(line)
+		if len(match) != 3 {
+			return fmt.Errorf("file_list line parse failed: %d %v", len(match), match)
+		}
+		err := t.parseFile(userName, match[1], match[2])
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func NewTarsnapProcess(args []string) *Process {
-	cmd := viper.GetString("tarsnap_command")
-	if cmd == "" {
-		cmd = "tarsnap"
+func (t *Tarsnap) Files() []string {
+	files := []string{}
+	for _, user := range t.Users {
+		for _, maildir := range user.Maildirs {
+			for _, file := range maildir.Files {
+				if !strings.HasSuffix(file.Name, "/") {
+					files = append(files, file.Name)
+				}
+			}
+		}
 	}
-	cmdline := append(strings.Split(cmd, " "), args...)
-	return NewProcess(cmdline[0], cmdline[1:])
+	return files
 }

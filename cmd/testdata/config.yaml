@@ -1,7 +1,6 @@
+archive: 2025-06-25.mailbox
+output_dir: ~/.tarsnap/restore
+metadata_dir: ~/.tarsnap/metadata
+tarsnap_command: "/usr/local/bin/tarsnap"
+keyfile: ~/.tarsnap/test-tarsnap.key
 verbose: true
-debug: true
-archive_name: maildir.home.2025-06-23
-dest_dir: ~/go/src/github.com/rstms/tarsnap-maildir-restore/cmd/testdata/out
-dir_list: ~/go/src/github.com/rstms/tarsnap-maildir-restore/cmd/testdata/dir_list
-file_list: ~/go/src/github.com/rstms/tarsnap-maildir-restore/cmd/testdata/file_list
-

@@ -6,3 +6,4 @@ cruft
 *postactivate
 cmd/testdata/file_list
 cmd/testdata/dir_list
+cmd/testdata/out

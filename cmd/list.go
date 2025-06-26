@@ -33,6 +33,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -45,13 +46,26 @@ var listCmd = &cobra.Command{
 Output a list of archives associated with a tarsnap key
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		p := NewTarsnapProcess([]string{"--list-archives", "--keyfile", viper.GetString("keyfile")})
+		p := NewTarsnapProcess([]string{"--list-archives", "--keyfile", ExpandPath(viper.GetString("keyfile"))})
 		stdout, stderr, err := p.Run()
 		cobra.CheckErr(err)
 		if stderr != "" {
 			fmt.Fprintf(os.Stderr, "%s\n", stderr)
 		}
-		fmt.Println(stdout)
+		archives := []string{}
+		for _, line := range strings.Split(stdout, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				if viper.GetBool("json") {
+					archives = append(archives, line)
+				} else {
+					fmt.Println(line)
+				}
+			}
+		}
+		if viper.GetBool("json") {
+			fmt.Println(FormatJSON(archives))
+		}
 	},
 }
 

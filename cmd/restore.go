@@ -43,7 +43,7 @@ Restore maildirs from ARCHIVE_NAME
 `,
 	Args: cobra.RangeArgs(0, 1),
 	Run: func(cmd *cobra.Command, args []string) {
-		archiveName := viper.GetString("archive_name")
+		archiveName := viper.GetString("archive")
 		if len(args) > 0 {
 			archiveName = args[0]
 		}
