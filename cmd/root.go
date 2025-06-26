@@ -70,5 +70,5 @@ func init() {
 	OptionString("maildir", "m", ".*", "maildir select filter (regex)")
 	OptionString("output-dir", "O", "./restore", "restore destination directory")
 	OptionString("metadata-dir", "M", "", "preloaded metadata directory")
-	OptionString("tarsnap-command", "T", "doas /usr/local/bin/tarsnap", "tarsnap command")
+	OptionString("tarsnap-command", "T", "/usr/local/bin/tarsnap", "tarsnap command")
 }
