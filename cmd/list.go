@@ -32,7 +32,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
+	"log"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -46,29 +46,39 @@ var listCmd = &cobra.Command{
 Output a list of archives associated with a tarsnap key
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		p := NewTarsnapProcess([]string{"--list-archives", "--keyfile", ExpandPath(viper.GetString("keyfile"))})
-		stdout, stderr, err := p.Run()
-		if stderr != "" {
-			fmt.Fprintf(os.Stderr, "%s\n", stderr)
-		}
+		archives, err := ListArchives()
 		cobra.CheckErr(err)
-		archives := []string{}
-		for _, line := range strings.Split(stdout, "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				if viper.GetBool("json") {
-					archives = append(archives, line)
-				} else {
-					fmt.Println(line)
-				}
-			}
-		}
+
 		if viper.GetBool("json") {
-			fmt.Println(FormatJSON(archives))
+			fmt.Println(FormatJSON(&archives))
+		} else {
+			for _, line := range archives {
+				fmt.Println(line)
+			}
 		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(listCmd)
+}
+
+func ListArchives() ([]string, error) {
+	archives := []string{}
+	p := NewTarsnapProcess([]string{"--list-archives", "--keyfile", ExpandPath(viper.GetString("keyfile"))})
+	stdout, stderr, err := p.Run()
+	if stderr != "" {
+		log.Printf("%s\n", stderr)
+	}
+	if err != nil {
+		return archives, err
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			archives = append(archives, line)
+		}
+	}
+
+	return archives, nil
 }

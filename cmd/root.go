@@ -64,7 +64,7 @@ func init() {
 	OptionSwitch("verbose", "v", "increase verbosity")
 	OptionSwitch("json", "j", "output json")
 	OptionSwitch("no-progress", "P", "suppress progress bar display")
-	OptionString("key", "k", "", "tarsnap key file")
+	OptionString("keyfile", "k", "", "tarsnap key file")
 	OptionString("archive", "a", "", "archive base name YYYY-MM-DD.hostname")
 	OptionString("user", "u", ".*", "username select filter (regex)")
 	OptionString("maildir", "m", ".*", "maildir select filter (regex)")
