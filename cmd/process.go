@@ -54,12 +54,12 @@ func NewProcess(name string, args []string) *Process {
 
 func (p *Process) Run() (string, string, error) {
 	p.Running = true
+	if p.debug {
+		log.Printf("Process.Run: %+v\n", p.Cmd)
+	}
 	err := p.Cmd.Run()
 	p.Running = false
-	if err != nil {
-		return "", "", err
-	}
-	return p.obuf.String(), p.ebuf.String(), nil
+	return p.obuf.String(), p.ebuf.String(), err
 }
 
 func NewProcessSet() *ProcessSet {
